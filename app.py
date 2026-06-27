@@ -197,6 +197,36 @@ def values_from_form(prefix, existing=None):
             "priority":priority,"status":status,"start_date":start.isoformat(),"end_date":end.isoformat(),
             "estimated_hours":hours,"progress":progress,"delay_reason":delay.strip(),"notes":notes.strip()}, start, end
 
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "")
+
+def require_admin():
+    pw = ADMIN_PASSWORD
+    # If no password is configured, treat everyone as admin
+    if not pw:
+        if "is_admin" not in st.session_state:
+            st.session_state["is_admin"] = True
+        return True
+
+    if "is_admin" not in st.session_state:
+        st.session_state["is_admin"] = False
+
+    if st.session_state["is_admin"]:
+        return True
+
+    # Owner login section in the sidebar
+    with st.sidebar:
+        st.subheader("Owner access")
+        entered = st.text_input("Admin password", type="password", key="admin_pw")
+        if st.button("Unlock editing", key="admin_btn"):
+            if entered == pw:
+                st.session_state["is_admin"] = True
+                st.success("Editing unlocked for this session.")
+            else:
+                st.error("Incorrect password.")
+
+    return st.session_state["is_admin"]
+
+
 init_db()
 st.markdown("""<style>
 .block-container{padding-top:1.2rem}.card{border:1px solid #DADCE0;border-radius:13px;padding:13px;margin-bottom:10px;background:white}
@@ -206,6 +236,8 @@ st.markdown("""<style>
 
 st.title("✅ Smart Task Planner")
 st.caption("Record, prioritise, reorganise and report your work from one interactive platform.")
+
+is_admin = require_admin()
 
 with st.sidebar:
     st.header("Planning settings")
@@ -242,14 +274,17 @@ with tabs[0]:
 
 with tabs[1]:
     st.subheader("Add a new task")
-    with st.form("add_form",clear_on_submit=True):
-        vals,sd,ed=values_from_form("add")
-        submitted=st.form_submit_button("Add task",use_container_width=True)
-        if submitted:
-            if not vals["title"]: st.error("Please enter a task title.")
-            elif ed<sd: st.error("The target end date cannot be earlier than the start date.")
-            else:
-                save_task(vals); st.success("Task added and the plan has been reorganised."); st.rerun()
+    if not is_admin:
+        st.info("Only the owner can add tasks. Viewing is read-only for guests.")
+    else:
+        with st.form("add_form",clear_on_submit=True):
+            vals,sd,ed=values_from_form("add")
+            submitted=st.form_submit_button("Add task",use_container_width=True)
+            if submitted:
+                if not vals["title"]: st.error("Please enter a task title.")
+                elif ed<sd: st.error("The target end date cannot be earlier than the start date.")
+                else:
+                    save_task(vals); st.success("Task added and the plan has been reorganised."); st.rerun()
 
 with tabs[2]:
     st.subheader("Colour coded Kanban board")
@@ -287,8 +322,11 @@ with tabs[3]:
         fig.update_yaxes(autorange="reversed")
         st.plotly_chart(fig,use_container_width=True)
         st.warning("Applying this plan replaces the start and end dates of all active tasks.")
-        if st.button("Apply suggested dates",type="primary"):
-            apply_plan(plan); st.success("Suggested dates applied."); st.rerun()
+        if not is_admin:
+            st.info("Only the owner can apply suggested dates. Guests can view the plan but cannot change task dates.")
+        else:
+            if st.button("Apply suggested dates",type="primary"):
+                apply_plan(plan); st.success("Suggested dates applied."); st.rerun()
 
 with tabs[4]:
     st.subheader("Upcoming weekly meeting report")
@@ -310,7 +348,10 @@ with tabs[4]:
 
 with tabs[5]:
     st.subheader("Edit, complete or delete tasks")
-    if tasks.empty: st.info("No tasks available.")
+    if tasks.empty:
+        st.info("No tasks available.")
+    elif not is_admin:
+        st.info("Only the owner can edit or delete tasks. Guests have read-only access.")
     else:
         options={f"#{int(r['id'])} · {r['title']}":int(r["id"]) for _,r in tasks.iterrows()}
         label=st.selectbox("Select a task",list(options))
